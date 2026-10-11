@@ -1,4 +1,5 @@
-import { useMemo, useState } from "react";
+
+import { useEffect, useMemo, useState } from "react";
 import {
   LineChart,
   Line,
@@ -9,43 +10,49 @@ import {
   ResponsiveContainer,
 } from "recharts";
 
-const datasets = {
-  "1h": [
-    { time: "09:00", flow: 3.2 },
-    { time: "09:05", flow: 4.8 },
-    { time: "09:10", flow: 3.9 },
-    { time: "09:15", flow: 5.1 },
-    { time: "09:20", flow: 9.8 },
-    { time: "09:25", flow: 4.1 },
-    { time: "09:30", flow: 3.7 },
-    { time: "09:35", flow: 4.4 },
-    { time: "09:40", flow: 10.1 },
-    { time: "09:45", flow: 5.2 },
-    { time: "09:50", flow: 4.6 },
-    { time: "09:55", flow: 3.9 },
-    { time: "10:00", flow: 4.2 },
-  ],
+import { getReadings } from "../api";
 
-  "6h": [
-    { time: "04:00", flow: 1.8 },
-    { time: "05:00", flow: 2.1 },
-    { time: "06:00", flow: 5.4 },
-    { time: "07:00", flow: 7.2 },
-    { time: "08:00", flow: 4.8 },
-    { time: "09:00", flow: 3.2 },
-    { time: "10:00", flow: 4.2 },
-  ],
-
-  "24h": [
-    { time: "00:00", flow: 1.1 },
-    { time: "04:00", flow: 0.8 },
-    { time: "08:00", flow: 6.4 },
-    { time: "12:00", flow: 8.2 },
-    { time: "16:00", flow: 5.9 },
-    { time: "20:00", flow: 7.1 },
-    { time: "24:00", flow: 2.4 },
-  ],
+const RANGE_MS = {
+  "1h": 60 * 60 * 1000,
+  "6h": 6 * 60 * 60 * 1000,
+  "24h": 24 * 60 * 60 * 1000,
 };
+
+// SQLite timestamps are returned as "YYYY-MM-DD HH:mm:ss".
+// Interpret these timezone-free timestamps consistently as UTC.
+function parseTimestamp(value) {
+  if (!value) return NaN;
+
+  const text = String(value).trim();
+  const match = text.match(
+    /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})(?:\.(\d+))?$/
+  );
+
+  if (match) {
+    const [
+      ,
+      year,
+      month,
+      day,
+      hour,
+      minute,
+      second,
+      fraction,
+    ] = match;
+
+    return Date.UTC(
+      Number(year),
+      Number(month) - 1,
+      Number(day),
+      Number(hour),
+      Number(minute),
+      Number(second),
+      Number((fraction || "0").slice(0, 3).padEnd(3, "0"))
+    );
+  }
+
+  return new Date(text).getTime();
+}
 
 function FlowChart({
   title = "Live Water Flow",
@@ -53,14 +60,102 @@ function FlowChart({
 }) {
   const [range, setRange] = useState("1h");
   const [isLive, setIsLive] = useState(true);
+  const [readings, setReadings] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [now, setNow] = useState(() => Date.now());
 
-  const data = useMemo(() => datasets[range], [range]);
+  useEffect(() => {
+    const clockInterval = setInterval(() => {
+      setNow(Date.now());
+    }, 3000);
+
+    return () => clearInterval(clockInterval);
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadReadings() {
+      try {
+        const result = await getReadings(500);
+
+        // Support either an array or the API's { readings: [...] } response.
+        const rows = Array.isArray(result)
+          ? result
+          : Array.isArray(result?.readings)
+            ? result.readings
+            : [];
+
+        if (!cancelled) {
+          setReadings(rows);
+          setError("");
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setError(err.message || "Unable to load flow readings.");
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    }
+
+    loadReadings();
+
+    if (!isLive) {
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    const intervalId = setInterval(loadReadings, 3000);
+
+    return () => {
+      cancelled = true;
+      clearInterval(intervalId);
+    };
+  }, [isLive]);
+
+  const data = useMemo(() => {
+    const cutoff = now - RANGE_MS[range];
+
+    return readings
+      .map((reading) => ({
+        reading,
+        timestamp: parseTimestamp(reading.receivedAt),
+        flow: Number(reading.flowRateLpm),
+      }))
+      .filter(({ reading, timestamp, flow }) => {
+        return (
+          Number.isFinite(timestamp) &&
+          timestamp >= cutoff &&
+          timestamp <= now + 60000 &&
+          reading.flowRateLpm != null &&
+          Number.isFinite(flow)
+        );
+      })
+      .sort((a, b) => a.timestamp - b.timestamp)
+      .map(({ reading, timestamp, flow }) => ({
+        timestamp,
+        time: new Date(timestamp).toLocaleTimeString([], {
+          hour: "2-digit",
+          minute: "2-digit",
+          ...(range === "1h" ? { second: "2-digit" } : {}),
+        }),
+        flow: Number(flow.toFixed(2)),
+        source: reading.source || "physical",
+      }));
+  }, [readings, range, now]);
+
+  const hasSimulatedReadings = data.some(
+    (reading) => reading.source === "simulated"
+  );
 
   return (
     <div className="chart-card">
-
       <div className="chart-header">
-
         <div>
           <div className="chart-title-row">
             <h3>{title}</h3>
@@ -77,12 +172,9 @@ function FlowChart({
         </div>
 
         <div className="chart-controls">
-
           <button
-            className={`chart-live-button ${
-              isLive ? "active" : ""
-            }`}
-            onClick={() => setIsLive(!isLive)}
+            className={`chart-live-button ${isLive ? "active" : ""}`}
+            onClick={() => setIsLive((previous) => !previous)}
           >
             {isLive ? "Pause" : "Resume"}
           </button>
@@ -96,86 +188,103 @@ function FlowChart({
             <option value="6h">Last 6 Hours</option>
             <option value="24h">Last 24 Hours</option>
           </select>
-
         </div>
-
       </div>
+
+      {hasSimulatedReadings && (
+        <p className="simulation-notice">
+          Demo data — chart includes simulated sensor readings.
+        </p>
+      )}
+
+      {error && (
+        <p className="simulation-notice">
+          Chart error: {error}
+        </p>
+      )}
 
       <div className="chart-container">
-
-        <ResponsiveContainer width="100%" height="100%">
-
-          <LineChart
-            data={data}
-            margin={{
-              top: 10,
-              right: 10,
-              left: -20,
-              bottom: 0,
-            }}
-          >
-
-            <CartesianGrid
-              strokeDasharray="3 3"
-              vertical={false}
-              stroke="#edf2f7"
-            />
-
-            <XAxis
-              dataKey="time"
-              tick={{
-                fontSize: 11,
-                fill: "#8a9bad",
+        {loading ? (
+          <p>Loading flow readings...</p>
+        ) : error && data.length === 0 ? (
+          <p>Unable to load chart data. Check the backend connection.</p>
+        ) : data.length === 0 ? (
+          <p>
+            No readings found in the selected time range. Check that your
+            computer clock and backend timestamps are aligned.
+          </p>
+        ) : (
+          <ResponsiveContainer width="100%" height="100%">
+            <LineChart
+              data={data}
+              margin={{
+                top: 10,
+                right: 10,
+                left: -20,
+                bottom: 0,
               }}
-              axisLine={false}
-              tickLine={false}
-            />
+            >
+              <CartesianGrid
+                strokeDasharray="3 3"
+                vertical={false}
+                stroke="#edf2f7"
+              />
 
-            <YAxis
-              tick={{
-                fontSize: 11,
-                fill: "#8a9bad",
-              }}
-              axisLine={false}
-              tickLine={false}
-              domain={[0, "auto"]}
-              unit=" L"
-            />
+              <XAxis
+                dataKey="time"
+                tick={{
+                  fontSize: 11,
+                  fill: "#8a9bad",
+                }}
+                axisLine={false}
+                tickLine={false}
+                minTickGap={25}
+              />
 
-            <Tooltip
-              contentStyle={{
-                border: "1px solid #e5edf5",
-                borderRadius: "10px",
-                boxShadow:
-                  "0 5px 20px rgba(16, 42, 67, 0.08)",
-              }}
-              formatter={(value) => [
-                `${value} L/min`,
-                "Flow",
-              ]}
-            />
+              <YAxis
+                tick={{
+                  fontSize: 11,
+                  fill: "#8a9bad",
+                }}
+                axisLine={false}
+                tickLine={false}
+                domain={[0, "auto"]}
+                unit=" L/min"
+              />
 
-            <Line
-              type="monotone"
-              dataKey="flow"
-              stroke="#1683d8"
-              strokeWidth={3}
-              dot={false}
-              isAnimationActive={true}
-              activeDot={{
-                r: 5,
-                strokeWidth: 3,
-                stroke: "#ffffff",
-                fill: "#1683d8",
-              }}
-            />
+              <Tooltip
+                contentStyle={{
+                  border: "1px solid #e5edf5",
+                  borderRadius: "10px",
+                  boxShadow: "0 5px 20px rgba(16, 42, 67, 0.08)",
+                }}
+                formatter={(value, name, item) => [
+                  `${Number(value).toFixed(2)} L/min`,
+                  item.payload.source === "simulated"
+                    ? "Flow (simulated)"
+                    : "Flow",
+                ]}
+                labelFormatter={(label) => `Time: ${label}`}
+              />
 
-          </LineChart>
-
-        </ResponsiveContainer>
-
+              <Line
+                type="monotone"
+                dataKey="flow"
+                stroke="#1683d8"
+                strokeWidth={3}
+                dot={false}
+                isAnimationActive={true}
+                activeDot={{
+                  r: 5,
+                  strokeWidth: 3,
+                  stroke: "#ffffff",
+                  fill: "#1683d8",
+                }}
+              />
+            </LineChart>
+          </ResponsiveContainer>
+        )}
       </div>
-
     </div>
   );
 }

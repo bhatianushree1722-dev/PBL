@@ -1,4 +1,5 @@
-import { useState } from "react";
+
+import { useEffect, useState } from "react";
 
 import {
   Droplets,
@@ -15,10 +16,79 @@ import {
 import StatusBanner from "../components/StatusBanner";
 import StatCard from "../components/StatCard";
 import FlowChart from "../components/FlowChart";
+import { getDashboardSummary } from "../api";
 
 function Overview() {
   const [selectedEvent, setSelectedEvent] = useState(null);
+  const [dashboard, setDashboard] = useState(null);
+  const [apiError, setApiError] = useState("");
 
+  // Fetch dashboard information from the backend.
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadDashboard() {
+      try {
+        const data = await getDashboardSummary();
+
+        if (!cancelled) {
+          setDashboard(data);
+          setApiError("");
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setApiError(
+            error.message || "Unable to connect to AquaSense."
+          );
+        }
+      }
+    }
+
+    loadDashboard();
+
+    const intervalId = setInterval(loadDashboard, 3000);
+
+    return () => {
+      cancelled = true;
+      clearInterval(intervalId);
+    };
+  }, []);
+
+  const latestReading = dashboard?.latest;
+  const todaySummary = dashboard?.today;
+
+  const isSimulated = latestReading?.source === "simulated";
+  const isDeviceOnline =
+    latestReading?.sensorStatus === "online";
+
+  const flowRate = Number(
+    latestReading?.flowRateLpm ?? 0
+  );
+
+  const todayUsage = Number(
+    todaySummary?.usageLitres ?? 0
+  );
+
+  const peakFlow = Number(
+    todaySummary?.peakFlowLpm ?? 0
+  );
+
+  const readingTime = latestReading?.receivedAt
+    ? new Date(latestReading.receivedAt)
+    : null;
+
+  const lastUpdate = readingTime
+    ? `${Math.max(
+        0,
+        Math.floor(
+          // eslint-disable-next-line react-hooks/purity
+          (Date.now() - readingTime.getTime()) / 1000
+        )
+      )} sec ago`
+    : "Waiting for data";
+
+  // Existing demonstration events.
+  // These will be connected to real backend events later.
   const recentEvents = [
     {
       type: "warning",
@@ -32,7 +102,6 @@ function Overview() {
       duration: "32 minutes",
       severity: "Attention",
     },
-
     {
       type: "info",
       title: "High-Flow Observation",
@@ -45,7 +114,6 @@ function Overview() {
       duration: "4 minutes",
       severity: "Observation",
     },
-
     {
       type: "normal",
       title: "Normal Operation Resumed",
@@ -63,11 +131,8 @@ function Overview() {
   return (
     <>
       <div className="overview-page">
-
         {/* PAGE HEADER */}
-
         <div className="overview-heading">
-
           <div>
             <h1>Good Morning!</h1>
 
@@ -79,71 +144,122 @@ function Overview() {
           <div className="overview-date">
             <span>Today</span>
 
-            <strong>
-              Residential Zone 01
-            </strong>
+            <strong>Residential Zone 01</strong>
           </div>
-
         </div>
 
-        {/* STATUS */}
+        {/* BACKEND CONNECTION / SIMULATION STATUS */}
+        {apiError ? (
+          <StatusBanner
+            status="warning"
+            title="Backend Connection Error"
+            message={apiError}
+          />
+        ) : !latestReading ? (
+          <StatusBanner
+            status="warning"
+            title="Waiting for Sensor Data"
+            message="AquaSense is waiting for the backend to provide a reading."
+          />
+        ) : (
+          <StatusBanner
+            status={isDeviceOnline ? "normal" : "warning"}
+            title={
+              isSimulated
+                ? "Simulation Mode Active"
+                : isDeviceOnline
+                  ? "Device Connected"
+                  : "Device Offline"
+            }
+            message={
+              isSimulated
+                ? "Displaying simulated sensor readings. Physical hardware is not being verified."
+                : isDeviceOnline
+                  ? "The latest reading was received from the configured device."
+                  : "The latest reading reports that the sensor is offline."
+            }
+          />
+        )}
 
-        <StatusBanner
-          status="normal"
-          title="System Normal"
-          message="No abnormal water flow detected at this time."
-        />
+        {isSimulated && !apiError && (
+          <p className="simulation-notice">
+            Demo mode — flow and pressure readings are simulated,
+            not measurements from physical hardware.
+          </p>
+        )}
 
         {/* STAT CARDS */}
-
         <div className="overview-stats">
-
           <StatCard
             icon={Droplets}
             title="Current Flow"
-            value="2.4 L/min"
-            status="Normal"
-            statusType="normal"
+            value={
+              latestReading
+                ? `${flowRate.toFixed(2)} L/min`
+                : "Waiting..."
+            }
+            status={
+              isSimulated
+                ? "Simulated"
+                : latestReading
+                  ? "Latest reading"
+                  : "No data"
+            }
+            statusType={
+              latestReading ? "normal" : "info"
+            }
           />
 
           <StatCard
             icon={Gauge}
             title="Today's Usage"
-            value="186.4 L"
-            status="↑ 8% vs average"
+            value={`${todayUsage.toFixed(2)} L`}
+            status={
+              isSimulated
+                ? "Simulated usage"
+                : "Recorded usage"
+            }
             statusType="info"
           />
 
           <StatCard
             icon={Wifi}
             title="Device Status"
-            value="Online"
-            status="Wi-Fi Strong"
-            statusType="normal"
+            value={
+              latestReading
+                ? isDeviceOnline
+                  ? "Connected"
+                  : "Offline"
+                : "Waiting..."
+            }
+            status={
+              isSimulated
+                ? "Simulation source"
+                : latestReading
+                  ? "Physical source"
+                  : "No reading received"
+            }
+            statusType={
+              latestReading ? "normal" : "info"
+            }
           />
 
           <StatCard
             icon={Bell}
             title="Active Alerts"
-            value="2"
-            status="0 Critical"
-            statusType="danger"
+            value="—"
+            status="Alert API not connected"
+            statusType="info"
           />
-
         </div>
 
         {/* MAIN GRID */}
-
         <div className="overview-main-grid">
-
           <FlowChart />
 
           {/* EVENTS */}
-
           <div className="recent-events-card">
-
             <div className="section-card-header">
-
               <div>
                 <h3>Recent Events</h3>
 
@@ -152,23 +268,28 @@ function Overview() {
                 </p>
               </div>
 
-              <button className="text-button">
+              <button
+                className="text-button"
+                onClick={() =>
+                  window.dispatchEvent(
+                    new CustomEvent("aquasense:navigate", {
+                      detail: { page: "events" },
+                    })
+                  )
+                }
+              >
                 View All
                 <ArrowRight size={15} />
               </button>
-
             </div>
 
             <div className="events-list">
-
               {recentEvents.map((event, index) => (
-
                 <button
                   className="overview-event"
                   key={index}
                   onClick={() => setSelectedEvent(event)}
                 >
-
                   <div
                     className={`event-indicator ${event.type}`}
                   >
@@ -186,132 +307,115 @@ function Overview() {
                   </div>
 
                   <div className="event-content">
-
                     <div className="event-title-row">
-
-                      <strong>
-                        {event.title}
-                      </strong>
-
+                      <strong>{event.title}</strong>
                       <ArrowRight size={14} />
-
                     </div>
 
-                    <span>
-                      {event.time}
-                    </span>
+                    <span>{event.time}</span>
 
-                    <p>
-                      {event.description}
-                    </p>
-
+                    <p>{event.description}</p>
                   </div>
-
                 </button>
-
               ))}
-
             </div>
-
           </div>
-
         </div>
 
-        {/* BOTTOM */}
-
+        {/* BOTTOM GRID */}
         <div className="overview-bottom-grid">
-
-          {/* DEVICE */}
-
+          {/* DEVICE SUMMARY */}
           <div className="device-summary-card">
-
             <div className="section-card-header">
-
               <div>
                 <h3>Device Status</h3>
 
-                <p>
-                  AquaSense monitoring device
-                </p>
+                <p>AquaSense monitoring device</p>
               </div>
 
               <div className="online-badge">
                 <span></span>
-                Online
+                {latestReading
+                  ? isSimulated
+                    ? "Simulated"
+                    : isDeviceOnline
+                      ? "Online"
+                      : "Offline"
+                  : "Waiting"}
               </div>
-
             </div>
 
             <div className="device-summary-body">
-
               <div className="device-summary-icon">
                 <Activity size={27} />
               </div>
 
               <div className="device-main-info">
-
                 <strong>
-                  ESP32-ZONE-001
+                  {dashboard?.deviceId || "aquasense-01"}
                 </strong>
 
-                <span>
-                  Residential Zone 01
-                </span>
-
+                <span>Residential Zone 01</span>
               </div>
-
             </div>
 
             <div className="device-metrics">
-
               <div>
                 <span>Wi-Fi</span>
-                <strong>Strong</strong>
+                <strong>
+                  {latestReading?.rssi != null
+                    ? `${latestReading.rssi} dBm`
+                    : "Unavailable"}
+                </strong>
               </div>
 
               <div>
                 <span>Sensor</span>
-                <strong>Operational</strong>
+                <strong>
+                  {latestReading?.sensorStatus || "Unknown"}
+                </strong>
               </div>
 
               <div>
                 <span>Last Update</span>
-                <strong>2 sec ago</strong>
+                <strong>{lastUpdate}</strong>
               </div>
-
             </div>
 
-            <button className="device-link">
+            <button
+              className="device-link"
+              onClick={() =>
+                window.dispatchEvent(
+                  new CustomEvent("aquasense:navigate", {
+                    detail: { page: "device-health" },
+                  })
+                )
+              }
+            >
               View Device Health
               <ArrowRight size={15} />
             </button>
-
           </div>
 
-          {/* SUMMARY */}
-
+          {/* TODAY'S SUMMARY */}
           <div className="quick-summary-card">
-
             <div className="section-card-header">
-
               <div>
                 <h3>Today's Summary</h3>
 
-                <p>
-                  Water activity overview
-                </p>
+                <p>Water activity overview</p>
               </div>
-
             </div>
 
             <div className="summary-grid">
-
               <div className="summary-item">
                 <Droplets size={19} />
 
                 <div>
                   <span>Total Volume</span>
-                  <strong>186.4 L</strong>
+                  <strong>
+                    {todayUsage.toFixed(2)} L
+                  </strong>
                 </div>
               </div>
 
@@ -320,7 +424,14 @@ function Overview() {
 
                 <div>
                   <span>Average Flow</span>
-                  <strong>2.1 L/min</strong>
+                  <strong>
+                    {todaySummary?.readingCount > 0
+                      ? `${(
+                          todayUsage /
+                          (todaySummary.readingCount * 2 / 60)
+                        ).toFixed(2)} L/min`
+                      : "—"}
+                  </strong>
                 </div>
               </div>
 
@@ -329,7 +440,9 @@ function Overview() {
 
                 <div>
                   <span>Peak Flow</span>
-                  <strong>12.4 L/min</strong>
+                  <strong>
+                    {peakFlow.toFixed(2)} L/min
+                  </strong>
                 </div>
               </div>
 
@@ -337,37 +450,28 @@ function Overview() {
                 <Bell size={19} />
 
                 <div>
-                  <span>Total Events</span>
-                  <strong>2</strong>
+                  <span>Total Readings</span>
+                  <strong>
+                    {todaySummary?.readingCount ?? 0}
+                  </strong>
                 </div>
               </div>
-
             </div>
-
           </div>
-
         </div>
-
       </div>
 
-      {/* =====================================================
-          EVENT DETAIL MODAL
-          ===================================================== */}
-
+      {/* EVENT DETAIL MODAL */}
       {selectedEvent && (
-
         <div
           className="event-modal-overlay"
           onClick={() => setSelectedEvent(null)}
         >
-
           <div
             className="event-modal"
             onClick={(event) => event.stopPropagation()}
           >
-
             <div className="event-modal-header">
-
               <div>
                 <span
                   className={`modal-status ${selectedEvent.type}`}
@@ -375,13 +479,9 @@ function Overview() {
                   {selectedEvent.severity}
                 </span>
 
-                <h2>
-                  {selectedEvent.title}
-                </h2>
+                <h2>{selectedEvent.title}</h2>
 
-                <p>
-                  {selectedEvent.time}
-                </p>
+                <p>{selectedEvent.time}</p>
               </div>
 
               <button
@@ -390,7 +490,6 @@ function Overview() {
               >
                 <X size={19} />
               </button>
-
             </div>
 
             <div className="modal-description">
@@ -398,45 +497,37 @@ function Overview() {
             </div>
 
             <div className="modal-metrics">
-
               <div>
                 <span>Observed Flow</span>
-                <strong>
-                  {selectedEvent.flow}
-                </strong>
+                <strong>{selectedEvent.flow}</strong>
               </div>
 
               <div>
                 <span>Duration</span>
-                <strong>
-                  {selectedEvent.duration}
-                </strong>
+                <strong>{selectedEvent.duration}</strong>
               </div>
 
               <div>
                 <span>Event Time</span>
                 <strong>
                   <Clock3 size={14} />
-                  {selectedEvent.time.split(",")[1]}
+                  {selectedEvent.time.split(",")[1] ||
+                    selectedEvent.time}
                 </strong>
               </div>
-
             </div>
 
             <div className="modal-note">
-
               <ShieldCheck size={18} />
 
               <p>
                 AquaSense detects abnormal flow patterns.
-                This event does not independently confirm
-                or locate a physical leak.
+                This demonstration event does not independently
+                confirm or locate a physical leak.
               </p>
-
             </div>
 
             <div className="modal-actions">
-
               <button
                 className="secondary-action"
                 onClick={() => setSelectedEvent(null)}
@@ -450,15 +541,10 @@ function Overview() {
               >
                 Mark as Reviewed
               </button>
-
             </div>
-
           </div>
-
         </div>
-
       )}
-
     </>
   );
 }
