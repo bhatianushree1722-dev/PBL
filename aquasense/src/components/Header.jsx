@@ -1,9 +1,18 @@
 
 import { useEffect, useState } from "react";
-import { Bell, ChevronDown, UserCircle, FlaskConical, Droplets } from "lucide-react";
+import {
+  Bell,
+  ChevronDown,
+  UserCircle,
+  FlaskConical,
+  Droplets,
+  Sun,
+  Moon,
+} from "lucide-react";
+
 import { getOperatingMode, setOperatingMode } from "../api";
 
-function Header() {
+function Header({ theme = "light", toggleTheme = () => {} }) {
   const [mode, setMode] = useState("normal");
   const [loading, setLoading] = useState(true);
   const [switching, setSwitching] = useState(false);
@@ -47,9 +56,11 @@ function Header() {
 
     try {
       const result = await setOperatingMode(nextMode);
-      setMode(result.mode === "simulator" ? "simulator" : "normal");
+      const updatedMode =
+        result.mode === "simulator" ? "simulator" : "normal";
 
-      // Tell mounted dashboard components to refresh mode-dependent data.
+      setMode(updatedMode);
+
       window.dispatchEvent(
         new CustomEvent("aquasense-mode-changed", {
           detail: { mode: result.mode },
@@ -67,6 +78,7 @@ function Header() {
       <div className="header-spacer" />
 
       <div className="header-actions">
+        {/* OPERATING MODE: independent of appearance theme */}
         <div
           className="operating-mode-control"
           role="group"
@@ -78,6 +90,7 @@ function Header() {
             ) : (
               <Droplets size={16} />
             )}
+
             {mode === "simulator" ? "Simulator Mode" : "Normal Mode"}
           </span>
 
@@ -105,12 +118,37 @@ function Header() {
           </span>
         </div>
 
-        <button className="notification-button" aria-label="Notifications">
+        {/* APPEARANCE: independent of operating mode */}
+        <button
+          type="button"
+          className="theme-toggle-button"
+          onClick={toggleTheme}
+          aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}
+          title={`Switch to ${theme === "dark" ? "Light" : "Dark"} Mode`}
+        >
+          {theme === "dark" ? (
+            <>
+              <Sun size={19} />
+              <span>Light</span>
+            </>
+          ) : (
+            <>
+              <Moon size={19} />
+              <span>Dark</span>
+            </>
+          )}
+        </button>
+
+        <button
+          type="button"
+          className="notification-button"
+          aria-label="Notifications"
+        >
           <Bell size={20} strokeWidth={2} />
           <span className="notification-badge">2</span>
         </button>
 
-        <button className="user-menu">
+        <button type="button" className="user-menu">
           <UserCircle size={34} strokeWidth={1.6} />
           <span>User</span>
           <ChevronDown size={16} />
