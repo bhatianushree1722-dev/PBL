@@ -1,4 +1,3 @@
-
 import {
   LayoutDashboard,
   Activity,
@@ -8,7 +7,6 @@ import {
   Cpu,
   Settings,
   Waves,
-  Bot,
 } from "lucide-react";
 
 const menuItems = [
@@ -37,10 +35,6 @@ const menuItems = [
     icon: Cpu,
   },
   {
-    label: "AI Assistant",
-    icon: Bot,
-  },
-  {
     label: "Settings",
     icon: Settings,
   },
@@ -62,18 +56,16 @@ function Sidebar({ activePage, setActivePage }) {
       </div>
 
       {/* Navigation */}
-      <nav className="sidebar-nav" aria-label="Main navigation">
+      <nav className="sidebar-nav">
         {menuItems.map((item) => {
           const Icon = item.icon;
           const isActive = activePage === item.label;
 
           return (
             <button
-              type="button"
               key={item.label}
               className={`nav-item ${isActive ? "active" : ""}`}
               onClick={() => setActivePage(item.label)}
-              aria-current={isActive ? "page" : undefined}
             >
               <Icon size={18} strokeWidth={2} />
               <span>{item.label}</span>
